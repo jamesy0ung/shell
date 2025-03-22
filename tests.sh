@@ -34,7 +34,7 @@ run_test "type echo" "echo is a shell builtin"
 run_test "type pwd" "pwd is a shell builtin"
 
 # 3. Test `type` command for external executables
-run_test "type ls" "ls is /bin/ls"  # Ensure /bin/ls exists
+run_test "type ls" "ls is /bin/ls" "ls is /usr/bin/ls"  # Ensure ls exists
 run_test "type grep" "grep is /bin/grep" "grep is /usr/bin/grep"  # Ensure grep exists
 
 # 4. Test running external commands
