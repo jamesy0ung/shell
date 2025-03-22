@@ -1,0 +1,21 @@
+name: shell
+options:
+  bundleIdPrefix: org.jamesyoung
+  deploymentTarget:
+    macOS: '15.0'
+targets:
+  shell:
+    type: tool
+    platform: macOS
+    sources: [.]
+    buildRules:
+      - name: Use Makefile
+        script: make
+        outputFiles: [shell]
+    buildPhases:
+      - runScript:
+          script: make
+          name: Build with Makefile
+    settings:
+      PRODUCT_NAME: shell
+      EXECUTABLE_NAME: shell
