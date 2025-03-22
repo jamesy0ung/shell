@@ -19,7 +19,7 @@
 /**
  * Builtin command definitions
  */
-static const char *BUILTIN_COMMANDS[] = {"cd", "echo", "exit", "pwd", "type"};
+static const char *BUILTIN_COMMANDS[] = {"cd", "echo", "exit", "pwd", "type", "which"};
 static const size_t NUM_BUILTIN_COMMANDS = sizeof(BUILTIN_COMMANDS) / sizeof(BUILTIN_COMMANDS[0]);
 
 /**
@@ -46,6 +46,7 @@ static void handle_exit_command(int argc, char **argv, const PathDirectories *di
 static void handle_echo_command(int argc, char **argv);
 static void handle_pwd_command(int argc, char **argv);
 static void handle_type_command(int argc, char **argv, const PathDirectories *dirs);
+static void handle_which_command(int argc, char **argv, const PathDirectories *dirs);
 static void execute_external_command(char **argv, const char *executable_path);
 
 /**
@@ -275,6 +276,34 @@ static void handle_type_command(int argc, char **argv, const PathDirectories *di
 }
 
 /**
+ * Handle the 'which' builtin command
+ */
+static void handle_which_command(int argc, char **argv, const PathDirectories *dirs) {
+    if (argc < 2) {
+        printf("which: missing argument\n");
+        return;
+    }
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        
+        // Check if it's a builtin command first
+        if (is_builtin_command(arg)) {
+            printf("%s: shell builtin command\n", arg);
+        } else {
+            // Use the existing find_executable function
+            char *executable_path = find_executable(dirs, arg);
+            if (executable_path) {
+                printf("%s\n", executable_path);
+                free(executable_path);
+            } else {
+                printf("%s not found\n", arg);
+            }
+        }
+    }
+}
+
+/**
  * Get user input from stdin
  */
 static char *get_user_input(char *buffer, size_t size) {
@@ -364,7 +393,10 @@ static void process_command(char *input, const PathDirectories *dirs) {
         handle_pwd_command(argc, args);
     } else if (strcmp(command, "type") == 0) {
         handle_type_command(argc, args, dirs);
-    } else {
+    } else if (strcmp(command, "which") == 0) {
+        handle_which_command(argc, args, dirs);
+    }
+    else {
         // Handle external commands
         char *executable_path = find_executable(dirs, command);
         if (executable_path) {
