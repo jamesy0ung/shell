@@ -7,6 +7,7 @@
 #include <spawn.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <errno.h>
 
 /**
  * Constants for shell operations
@@ -347,7 +348,14 @@ static void execute_external_command(char **argv, const char *executable_path) {
 
     // Wait for the child process to finish
     int wait_status;
-    if (waitpid(pid, &wait_status, 0) == -1) {
+    pid_t wait_result;
+    
+    // Handle EINTR by retrying waitpid
+    while ((wait_result = waitpid(pid, &wait_status, 0)) == -1 && errno == EINTR) {
+        // Just retry if interrupted by a signal
+    }
+    
+    if (wait_result == -1) {
         perror("waitpid");
         current_child_pid = -1;
         sigaction(SIGINT, &oldaction, NULL);  // Restore previous signal handler
@@ -356,7 +364,6 @@ static void execute_external_command(char **argv, const char *executable_path) {
 
     current_child_pid = -1;
     sigaction(SIGINT, &oldaction, NULL);
-
 }
 
 /**
