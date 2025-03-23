@@ -418,7 +418,7 @@ static void process_command(char *input, const PathDirectories *dirs) {
 /**
  * Main function - entry point of the shell
  */
-int main(void) {
+int main(int argc, char **argv) {
     // Set up the signal handler for Ctrl+C
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -437,6 +437,22 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    // If command line arguments are provided, execute them and exit
+    if (argc > 1) {
+        // Create a single command string from all arguments
+        char command[MAX_INPUT_SIZE] = "";
+        for (int i = 1; i < argc; i++) {
+            if (i > 1) strncat(command, " ", MAX_INPUT_SIZE - strlen(command) - 1);
+            strncat(command, argv[i], MAX_INPUT_SIZE - strlen(command) - 1);
+        }
+        
+        // Process the command
+        process_command(command, dirs);
+        cleanup_path_directories(dirs);
+        return EXIT_SUCCESS;
+    }
+
+    // Normal interactive shell mode
     char input[MAX_INPUT_SIZE];
     while (get_user_input(input, sizeof(input))) {
         process_command(input, dirs);
