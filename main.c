@@ -49,6 +49,7 @@ static void handle_pwd_command(int argc, char **argv);
 static void handle_type_command(int argc, char **argv, const PathDirectories *dirs);
 static void handle_which_command(int argc, char **argv, const PathDirectories *dirs);
 static void execute_external_command(char **argv, const char *executable_path);
+static char* get_prompt(void);
 
 /**
  * Global variable to track the current child process ID
@@ -308,7 +309,7 @@ static void handle_which_command(int argc, char **argv, const PathDirectories *d
  * Get user input from stdin
  */
 static char *get_user_input(char *buffer, size_t size) {
-    printf("$ ");
+    printf("%s", get_prompt());
     fflush(stdout);
 
     if (!fgets(buffer, size, stdin)) {
@@ -412,6 +413,18 @@ static void process_command(char *input, const PathDirectories *dirs) {
         } else {
             printf("%s: command not found\n", command);
         }
+    }
+}
+
+/**
+ * Find if user is root or not, return # or $
+ */
+
+static char* get_prompt(void) {
+    if (geteuid() == 0) {
+        return "# ";
+    } else {
+        return "$ ";
     }
 }
 
