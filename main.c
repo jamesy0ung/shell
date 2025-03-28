@@ -18,19 +18,32 @@
 #define MAX_COMMAND_ARGS 64
 
 /**
- * Builtin command definitions
- */
-static const char *BUILTIN_COMMANDS[] = {"cd", "echo", "exit", "pwd", "type", "which"};
-static const size_t NUM_BUILTIN_COMMANDS = sizeof(BUILTIN_COMMANDS) / sizeof(BUILTIN_COMMANDS[0]);
-
-/**
  * Structure to store PATH directories
  */
 typedef struct {
-    char **directories;  // Array of directory paths
-    size_t count;        // Number of directories currently stored
-    size_t capacity;     // Total capacity of the array
+    char **directories; // Array of directory paths
+    size_t count;       // Number of directories currently stored
+    size_t capacity;    // Total capacity of the array
 } PathDirectories;
+
+/**
+ * Function type definition for builtin commands
+ */
+typedef void (*builtin_handler_func)(int argc, char **argv,
+                                     const PathDirectories *dirs);
+
+/**
+ * Structure to define a builtin command
+ */
+typedef struct {
+    const char *name;
+    builtin_handler_func handler;
+} BuiltinCommand;
+
+/**
+ * Global variable to track the current child process ID
+ */
+static pid_t current_child_pid = -1;
 
 /**
  * Function prototypes
@@ -39,31 +52,71 @@ static PathDirectories *initialize_path_directories(void);
 static PathDirectories *parse_path(const char *path);
 static void cleanup_path_directories(PathDirectories *dirs);
 static char *find_executable(const PathDirectories *dirs, const char *command);
-static int is_builtin_command(const char *cmd);
 static char *get_user_input(char *buffer, size_t size);
 static void process_command(char *input, const PathDirectories *dirs);
+static void execute_external_command(char **argv, const char *executable_path);
+static char *get_prompt(void);
+
+/* Builtin command handlers */
 static void handle_cd_command(int argc, char **argv);
-static void handle_exit_command(int argc, char **argv, const PathDirectories *dirs);
 static void handle_echo_command(int argc, char **argv);
 static void handle_pwd_command(int argc, char **argv);
-static void handle_type_command(int argc, char **argv, const PathDirectories *dirs);
-static void handle_which_command(int argc, char **argv, const PathDirectories *dirs);
-static void execute_external_command(char **argv, const char *executable_path);
-static char* get_prompt(void);
+
+/* Wrapper functions for command handlers with consistent signatures */
+static void handle_cd_wrapper(int argc, char **argv,
+                              const PathDirectories *dirs);
+static void handle_echo_wrapper(int argc, char **argv,
+                                const PathDirectories *dirs);
+static void handle_pwd_wrapper(int argc, char **argv,
+                               const PathDirectories *dirs);
+static void handle_exit_command(int argc, char **argv,
+                                const PathDirectories *dirs);
+static void handle_type_command(int argc, char **argv,
+                                const PathDirectories *dirs);
+static void handle_which_command(int argc, char **argv,
+                                 const PathDirectories *dirs);
 
 /**
- * Global variable to track the current child process ID
+ * Wrapping functions for command handlers that don't need PathDirectories
  */
-static pid_t current_child_pid = -1;
+static void handle_cd_wrapper(int argc, char **argv,
+                              const PathDirectories *dirs) {
+    (void)dirs; // Unused parameter
+    handle_cd_command(argc, argv);
+}
+
+static void handle_echo_wrapper(int argc, char **argv,
+                                const PathDirectories *dirs) {
+    (void)dirs; // Unused parameter
+    handle_echo_command(argc, argv);
+}
+
+static void handle_pwd_wrapper(int argc, char **argv,
+                               const PathDirectories *dirs) {
+    (void)dirs; // Unused parameter
+    handle_pwd_command(argc, argv);
+}
+
+/**
+ * Builtin command definitions
+ */
+static const char *BUILTIN_COMMANDS[] = {"cd",  "echo", "exit",
+                                         "pwd", "type", "which"};
+
+static const BuiltinCommand BUILTIN_COMMAND_TABLE[] = {
+    {"cd", handle_cd_wrapper},     {"echo", handle_echo_wrapper},
+    {"exit", handle_exit_command}, {"pwd", handle_pwd_wrapper},
+    {"type", handle_type_command}, {"which", handle_which_command}};
+
+static const size_t NUM_BUILTIN_COMMANDS =
+    sizeof(BUILTIN_COMMAND_TABLE) / sizeof(BUILTIN_COMMAND_TABLE[0]);
 
 /**
  * Signal handler for SIGINT (Ctrl+C)
  */
 static void sigint_handler(int signum) {
     (void)signum;
-    if (current_child_pid > 0) {
-        kill(current_child_pid, SIGINT);
-    }
+    if (current_child_pid > 0) { kill(current_child_pid, SIGINT); }
 }
 
 /**
@@ -79,10 +132,9 @@ static int compare_builtin_commands(const void *a, const void *b) {
  * Check if the given command is a builtin
  */
 static int is_builtin_command(const char *cmd) {
-    if (!cmd)
-        return 0;
-    return bsearch(cmd, BUILTIN_COMMANDS, NUM_BUILTIN_COMMANDS,
-                   sizeof(char *), compare_builtin_commands) != NULL;
+    if (!cmd) return 0;
+    return bsearch(cmd, BUILTIN_COMMANDS, NUM_BUILTIN_COMMANDS, sizeof(char *),
+                   compare_builtin_commands) != NULL;
 }
 
 /**
@@ -90,8 +142,7 @@ static int is_builtin_command(const char *cmd) {
  */
 static PathDirectories *initialize_path_directories(void) {
     PathDirectories *dirs = calloc(1, sizeof(PathDirectories));
-    if (!dirs)
-        return NULL;
+    if (!dirs) return NULL;
 
     dirs->capacity = MIN_PATH_DIRS;
     dirs->directories = calloc(dirs->capacity, sizeof(char *));
@@ -108,12 +159,10 @@ static PathDirectories *initialize_path_directories(void) {
  * Parse the PATH environment variable into a PathDirectories structure
  */
 static PathDirectories *parse_path(const char *path) {
-    if (!path)
-        return NULL;
+    if (!path) return NULL;
 
     PathDirectories *dirs = initialize_path_directories();
-    if (!dirs)
-        return NULL;
+    if (!dirs) return NULL;
 
     char *path_copy = strdup(path);
     if (!path_copy) {
@@ -125,8 +174,8 @@ static PathDirectories *parse_path(const char *path) {
     while (token) {
         if (dirs->count >= dirs->capacity) {
             size_t new_capacity = dirs->capacity * 2;
-            char **new_dirs = realloc(dirs->directories,
-                                    new_capacity * sizeof(char *));
+            char **new_dirs =
+                realloc(dirs->directories, new_capacity * sizeof(char *));
             if (!new_dirs) {
                 cleanup_path_directories(dirs);
                 free(path_copy);
@@ -155,8 +204,7 @@ static PathDirectories *parse_path(const char *path) {
  * Free all memory associated with the PathDirectories structure
  */
 static void cleanup_path_directories(PathDirectories *dirs) {
-    if (!dirs)
-        return;
+    if (!dirs) return;
 
     if (dirs->directories) {
         for (size_t i = 0; i < dirs->count; i++) {
@@ -171,15 +219,11 @@ static void cleanup_path_directories(PathDirectories *dirs) {
  * Find the full path to an executable in the PATH
  */
 static char *find_executable(const PathDirectories *dirs, const char *command) {
-    if (!dirs || !command || !*command) {
-        return NULL;
-    }
+    if (!dirs || !command || !*command) { return NULL; }
 
     // If command contains a path separator, check if it's directly executable
     if (strchr(command, '/') != NULL) {
-        if (access(command, X_OK) == 0) {
-            return strdup(command);
-        }
+        if (access(command, X_OK) == 0) { return strdup(command); }
         return NULL;
     }
 
@@ -187,9 +231,7 @@ static char *find_executable(const PathDirectories *dirs, const char *command) {
     for (size_t i = 0; i < dirs->count; i++) {
         char path[PATH_MAX];
         snprintf(path, PATH_MAX, "%s/%s", dirs->directories[i], command);
-        if (access(path, X_OK) == 0) {
-            return strdup(path);
-        }
+        if (access(path, X_OK) == 0) { return strdup(path); }
     }
     return NULL;
 }
@@ -209,19 +251,16 @@ static void handle_cd_command(int argc, char **argv) {
         path = argv[1];
     }
 
-    if (chdir(path) != 0) {
-        perror("cd");
-    }
+    if (chdir(path) != 0) { perror("cd"); }
 }
 
 /**
  * Handle the 'exit' builtin command
  */
-static void handle_exit_command(int argc, char **argv, const PathDirectories *dirs) {
+static void handle_exit_command(int argc, char **argv,
+                                const PathDirectories *dirs) {
     int status = 0;
-    if (argc > 1) {
-        status = atoi(argv[1]);
-    }
+    if (argc > 1) { status = atoi(argv[1]); }
     cleanup_path_directories((PathDirectories *)dirs);
     exit(status);
 }
@@ -257,7 +296,8 @@ static void handle_pwd_command(int argc, char **argv) {
 /**
  * Handle the 'type' builtin command
  */
-static void handle_type_command(int argc, char **argv, const PathDirectories *dirs) {
+static void handle_type_command(int argc, char **argv,
+                                const PathDirectories *dirs) {
     if (argc < 2) {
         printf("type: missing argument\n");
         return;
@@ -280,7 +320,8 @@ static void handle_type_command(int argc, char **argv, const PathDirectories *di
 /**
  * Handle the 'which' builtin command
  */
-static void handle_which_command(int argc, char **argv, const PathDirectories *dirs) {
+static void handle_which_command(int argc, char **argv,
+                                 const PathDirectories *dirs) {
     if (argc < 2) {
         printf("which: missing argument\n");
         return;
@@ -288,7 +329,7 @@ static void handle_which_command(int argc, char **argv, const PathDirectories *d
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
-        
+
         // Check if it's a builtin command first
         if (is_builtin_command(arg)) {
             printf("%s: shell builtin command\n", arg);
@@ -312,14 +353,10 @@ static char *get_user_input(char *buffer, size_t size) {
     printf("%s", get_prompt());
     fflush(stdout);
 
-    if (!fgets(buffer, size, stdin)) {
-        return NULL;
-    }
+    if (!fgets(buffer, size, stdin)) { return NULL; }
 
     size_t len = strlen(buffer);
-    if (len > 0 && buffer[len - 1] == '\n') {
-        buffer[len - 1] = '\0';
-    }
+    if (len > 0 && buffer[len - 1] == '\n') { buffer[len - 1] = '\0'; }
 
     return buffer;
 }
@@ -338,7 +375,8 @@ static void execute_external_command(char **argv, const char *executable_path) {
     action.sa_handler = sigint_handler;
     sigaction(SIGINT, &action, &oldaction);
 
-    int spawn_status = posix_spawn(&pid, executable_path, NULL, NULL, argv, environ);
+    int spawn_status =
+        posix_spawn(&pid, executable_path, NULL, NULL, argv, environ);
 
     if (spawn_status != 0) {
         printf("posix_spawn failed: %s\n", strerror(spawn_status));
@@ -350,16 +388,17 @@ static void execute_external_command(char **argv, const char *executable_path) {
     // Wait for the child process to finish
     int wait_status;
     pid_t wait_result;
-    
+
     // Handle EINTR by retrying waitpid
-    while ((wait_result = waitpid(pid, &wait_status, 0)) == -1 && errno == EINTR) {
+    while ((wait_result = waitpid(pid, &wait_status, 0)) == -1 &&
+           errno == EINTR) {
         // Just retry if interrupted by a signal
     }
-    
+
     if (wait_result == -1) {
         perror("waitpid");
         current_child_pid = -1;
-        sigaction(SIGINT, &oldaction, NULL);  // Restore previous signal handler
+        sigaction(SIGINT, &oldaction, NULL); // Restore previous signal handler
         return;
     }
 
@@ -371,8 +410,7 @@ static void execute_external_command(char **argv, const char *executable_path) {
  * Process a command string
  */
 static void process_command(char *input, const PathDirectories *dirs) {
-    if (!input || !*input)
-        return;
+    if (!input || !*input) return;
 
     // Split input into arguments
     char *args[MAX_COMMAND_ARGS];
@@ -385,42 +423,32 @@ static void process_command(char *input, const PathDirectories *dirs) {
     }
     args[argc] = NULL;
 
-    if (argc == 0)
-        return;  // Empty command
+    if (argc == 0) return; // Empty command
 
     const char *command = args[0];
 
-    // Handle built-in commands
-    if (strcmp(command, "cd") == 0) {
-        handle_cd_command(argc, args);
-    } else if (strcmp(command, "exit") == 0) {
-        handle_exit_command(argc, args, dirs);
-    } else if (strcmp(command, "echo") == 0) {
-        handle_echo_command(argc, args);
-    } else if (strcmp(command, "pwd") == 0) {
-        handle_pwd_command(argc, args);
-    } else if (strcmp(command, "type") == 0) {
-        handle_type_command(argc, args, dirs);
-    } else if (strcmp(command, "which") == 0) {
-        handle_which_command(argc, args, dirs);
-    }
-    else {
-        // Handle external commands
-        char *executable_path = find_executable(dirs, command);
-        if (executable_path) {
-            execute_external_command(args, executable_path);
-            free(executable_path);
-        } else {
-            printf("%s: command not found\n", command);
+    // Check if it's a builtin command
+    for (size_t i = 0; i < NUM_BUILTIN_COMMANDS; i++) {
+        if (strcmp(command, BUILTIN_COMMAND_TABLE[i].name) == 0) {
+            BUILTIN_COMMAND_TABLE[i].handler(argc, args, dirs);
+            return;
         }
+    }
+
+    // If we get here, it's not a builtin command
+    char *executable_path = find_executable(dirs, command);
+    if (executable_path) {
+        execute_external_command(args, executable_path);
+        free(executable_path);
+    } else {
+        printf("%s: command not found\n", command);
     }
 }
 
 /**
  * Find if user is root or not, return # or $
  */
-
-static char* get_prompt(void) {
+static char *get_prompt(void) {
     if (geteuid() == 0) {
         return "# ";
     } else {
@@ -455,10 +483,11 @@ int main(int argc, char **argv) {
         // Create a single command string from all arguments
         char command[MAX_INPUT_SIZE] = "";
         for (int i = 1; i < argc; i++) {
-            if (i > 1) strncat(command, " ", MAX_INPUT_SIZE - strlen(command) - 1);
+            if (i > 1)
+                strncat(command, " ", MAX_INPUT_SIZE - strlen(command) - 1);
             strncat(command, argv[i], MAX_INPUT_SIZE - strlen(command) - 1);
         }
-        
+
         // Process the command
         process_command(command, dirs);
         cleanup_path_directories(dirs);
