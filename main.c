@@ -353,7 +353,7 @@ static char *get_user_input(char *buffer, size_t size) {
     printf("%s", get_prompt());
     fflush(stdout);
 
-    if (!fgets(buffer, size, stdin)) { return NULL; }
+    if (!fgets(buffer, (int)size, stdin)) { return NULL; }
 
     size_t len = strlen(buffer);
     if (len > 0 && buffer[len - 1] == '\n') { buffer[len - 1] = '\0'; }
